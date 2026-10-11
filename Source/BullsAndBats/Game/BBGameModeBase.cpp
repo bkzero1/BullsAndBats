@@ -131,16 +131,22 @@ void ABBGameModeBase::PrintChatMessageString(ABBPlayerController* InChattingPlay
 		return;
 	}
 
-	// 숫자로만 된 입력과 일반 채팅을 먼저 구분합니다. 빈 입력은 숫자로 보지 않습니다.
+	// 숫자로만 된 입력인지와 숫자 포함 여부를 확인합니다. 문자 뒤의 숫자도 확인하므로 끝까지 순회합니다.
 	bool bIsNumericInput = InChatMessageString.IsEmpty() == false;
+	bool bHasDigit = false;
 	for (TCHAR Character : InChatMessageString)
 	{
-		if (Character < '0' || Character > '9')
+		if (Character >= '0' && Character <= '9')
+		{
+			bHasDigit = true;
+		}
+		else
 		{
 			bIsNumericInput = false;
-			break;
 		}
 	}
+	// 세 글자에 숫자와 다른 문자가 섞인 입력도 오류 안내 대상으로 봅니다.
+	const bool bIsMixedGuessInput = InChatMessageString.Len() == 3 && bHasDigit && bIsNumericInput == false;
 
 	// 일반 채팅에도 보낸 사람의 이름을 붙이고 원문 내용은 유지합니다.
 	ABBPlayerState* PlayerState = InChattingPlayerController->GetPlayerState<ABBPlayerState>();
@@ -151,7 +157,7 @@ void ABBGameModeBase::PrintChatMessageString(ABBPlayerController* InChattingPlay
 	{
 		CombinedMessageString = FString::Printf(TEXT("%s: %s"), *PlayerState->GetPlayerName(), *InChatMessageString);
 	}
-	if (bIsNumericInput)
+	if (bIsNumericInput || bIsMixedGuessInput)
 	{
 		if (IsValid(PlayerState) == false)
 		{
@@ -169,6 +175,10 @@ void ABBGameModeBase::PrintChatMessageString(ABBPlayerController* InChattingPlay
 				if (InChatMessageString.Len() != 3)
 				{
 					InputErrorMessage = TEXT("3자리 숫자를 입력해주세요.");
+				}
+				else if (bIsNumericInput == false)
+				{
+					InputErrorMessage = TEXT("숫자만 입력해주세요.");
 				}
 				else if (InChatMessageString.Contains(TEXT("0")))
 				{
