@@ -3,9 +3,11 @@
 #include "Player/BBPlayerController.h"
 
 #include "UI/BBChatInput.h"
-#include "Engine/Engine.h"
+#include "BullsAndBats.h"
 #include "Engine/World.h"
 #include "Game/BBGameModeBase.h"
+#include "Blueprint/UserWidget.h"
+#include "Net/UnrealNetwork.h"
 
 void ABBPlayerController::BeginPlay()
 {
@@ -15,6 +17,17 @@ void ABBPlayerController::BeginPlay()
 	if (IsLocalController() == false)
 	{
 		return;
+	}
+
+	// 로컬 플레이어의 공지 위젯을 만들고, 채팅 입력을 가리지 않도록 마우스 판정에서 제외합니다.
+	if (IsValid(NotificationTextWidgetClass))
+	{
+		NotificationTextWidgetInstance = CreateWidget<UUserWidget>(this, NotificationTextWidgetClass);
+		if (IsValid(NotificationTextWidgetInstance))
+		{
+			NotificationTextWidgetInstance->SetVisibility(ESlateVisibility::HitTestInvisible);
+			NotificationTextWidgetInstance->AddToViewport();
+		}
 	}
 
 	if (IsValid(ChatInputWidgetClass) == false)
@@ -35,6 +48,14 @@ void ABBPlayerController::BeginPlay()
 	FInputModeUIOnly InputMode;
 	SetInputMode(InputMode);
 	bShowMouseCursor = true;
+}
+
+void ABBPlayerController::GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutLifetimeProps) const
+{
+	Super::GetLifetimeReplicatedProps(OutLifetimeProps);
+
+	// 이 컨트롤러의 공지 문구를 소유 클라이언트로 복제합니다.
+	DOREPLIFETIME(ThisClass, NotificationText);
 }
 
 void ABBPlayerController::SetChatMessageString(const FString& InChatMessageString)
@@ -68,8 +89,5 @@ void ABBPlayerController::ClientRPCPrintChatMessageString_Implementation(const F
 	// 수신 로그와 화면 출력을 함께 남겨 전달 여부를 확인합니다.
 	UE_LOG(LogTemp, Log, TEXT("Client received chat: %s"), *InChatMessageString);
 
-	if (GEngine)
-	{
-		GEngine->AddOnScreenDebugMessage(-1, 10.f, FColor::White, InChatMessageString);
-	}
+	BBFunctionLibrary::MyPrintString(this, InChatMessageString, 10.f, FColor::White);
 }

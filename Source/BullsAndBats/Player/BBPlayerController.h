@@ -7,6 +7,7 @@
 #include "BBPlayerController.generated.h"
 
 class UBBChatInput;
+class UUserWidget;
 
 /**
  *
@@ -17,6 +18,12 @@ class BULLSANDBATS_API ABBPlayerController : public APlayerController
 	GENERATED_BODY()
 
 public:
+	virtual void GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutLifetimeProps) const override;
+
+	// 서버의 공지 문구를 복제하고, 공지 위젯의 Text 바인딩에서 읽습니다.
+	UPROPERTY(Replicated, BlueprintReadOnly, Category = "Notification")
+	FText NotificationText;
+
 	// 위젯에서 전달한 채팅 내용을 받습니다.
 	void SetChatMessageString(const FString& InChatMessageString);
 
@@ -41,4 +48,11 @@ protected:
 	// 실제로 생성한 위젯 인스턴스를 보관합니다.
 	UPROPERTY()
 	TObjectPtr<UBBChatInput> ChatInputWidgetInstance;
+
+	// 채팅과 별도로 생성할 공지 위젯 클래스를 블루프린트에서 지정합니다.
+	UPROPERTY(EditDefaultsOnly, Category = "Notification")
+	TSubclassOf<UUserWidget> NotificationTextWidgetClass;
+
+	UPROPERTY()
+	TObjectPtr<UUserWidget> NotificationTextWidgetInstance;
 };

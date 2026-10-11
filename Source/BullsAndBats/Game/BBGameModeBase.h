@@ -36,6 +36,15 @@ protected:
 	// 유효한 세 자리 정답과 추측을 비교해 S/B 또는 OUT을 반환합니다.
 	FString JudgeResult(const FString& InSecretNumberString, const FString& InGuessNumberString) const;
 
+	// 받아들인 추측 이후 승리를 먼저 확인하고, 모두 기회를 소진했으면 무승부로 종료합니다.
+	void JudgeGame(ABBPlayerController* InChattingPlayerController, const FString& InGuessNumberString);
+
+	// 결과 공지는 유지하고 정답과 모든 플레이어의 횟수를 초기화합니다.
+	void ResetGame();
+
+	// 종료된 게임에서 추가 추측으로 결과가 바뀌는 것을 막습니다.
+	bool bIsGameOver = false;
+
 	// GameMode는 서버에만 존재하므로 정답을 이곳에 보관합니다.
 	FString SecretNumberString;
 };

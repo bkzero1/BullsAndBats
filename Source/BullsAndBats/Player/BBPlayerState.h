@@ -24,6 +24,9 @@ public:
 	// 서버에서만 남은 횟수를 확인하고 증가시키며, 성공 여부를 반환합니다.
 	bool TryIncreaseGuessCount();
 
+	// 새 게임을 시작할 때 서버에서 시도 횟수를 초기화합니다.
+	void ResetGuessCount();
+
 protected:
 	// 서버가 변경한 현재 횟수를 클라이언트에 복제합니다.
 	UPROPERTY(Replicated)

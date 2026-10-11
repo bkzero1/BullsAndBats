@@ -23,3 +23,13 @@ bool ABBPlayerState::TryIncreaseGuessCount()
 	++CurrentGuessCount;
 	return true;
 }
+
+void ABBPlayerState::ResetGuessCount()
+{
+	if (HasAuthority() == false)
+	{
+		return;
+	}
+
+	CurrentGuessCount = 0;
+}

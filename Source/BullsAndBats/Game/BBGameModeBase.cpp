@@ -23,12 +23,18 @@ void ABBGameModeBase::OnPostLogin(AController* NewPlayer)
 		return;
 	}
 
+	// 접속한 플레이어의 공지 위젯에 표시할 문구를 서버에서 설정합니다.
+	PlayerController->NotificationText = FText::FromString(TEXT("게임 서버에 접속했습니다."));
+
 	ABBPlayerState* PlayerState = PlayerController->GetPlayerState<ABBPlayerState>();
 	if (IsValid(PlayerState))
 	{
 		// 엔진의 기본 플레이어 이름에 접속 순서 번호를 저장합니다.
 		PlayerState->SetPlayerName(FString::Printf(TEXT("Player%d"), NextPlayerNumber));
 		++NextPlayerNumber;
+
+		// 디버깅용: 접속 시에도 현재 정답을 다시 출력해 접속 로그 근처에서 확인합니다.
+		UE_LOG(LogTemp, Warning, TEXT("[접속 시 정답 확인] %s 접속 / 현재 정답: %s"), *PlayerState->GetPlayerName(), *SecretNumberString);
 	}
 }
 
@@ -139,6 +145,8 @@ void ABBGameModeBase::PrintChatMessageString(ABBPlayerController* InChattingPlay
 	// 일반 채팅에도 보낸 사람의 이름을 붙이고 원문 내용은 유지합니다.
 	ABBPlayerState* PlayerState = InChattingPlayerController->GetPlayerState<ABBPlayerState>();
 	FString CombinedMessageString = InChatMessageString;
+	FString InputErrorMessage;
+	bool bIsGuessAccepted = false;
 	if (IsValid(PlayerState))
 	{
 		CombinedMessageString = FString::Printf(TEXT("%s: %s"), *PlayerState->GetPlayerName(), *InChatMessageString);
@@ -157,11 +165,31 @@ void ABBGameModeBase::PrintChatMessageString(ABBPlayerController* InChattingPlay
 		{
 			if (PlayerState->GetCurrentGuessCount() < PlayerState->GetMaxGuessCount())
 			{
-				InChattingPlayerController->ClientRPCPrintChatMessageString(TEXT("숫자 추측은 1~9의 서로 다른 숫자 3개로 입력해 주세요. 예: 123"));
+				// 오류 문구만 준비하고, 입력 원문을 전송한 뒤 본인에게 안내합니다.
+				if (InChatMessageString.Len() != 3)
+				{
+					InputErrorMessage = TEXT("3자리 숫자를 입력해주세요.");
+				}
+				else if (InChatMessageString.Contains(TEXT("0")))
+				{
+					InputErrorMessage = TEXT("1~9 사이의 숫자만 입력해주세요.");
+				}
+				else
+				{
+					// 세 자리이고 모두 1~9인데 검사를 통과하지 못했다면 중복이 원인입니다.
+					InputErrorMessage = TEXT("중복되지 않은 숫자를 입력해주세요.");
+				}
 			}
 		}
 		else
 		{
+			// 게임이 끝났다면 일반 채팅은 허용하되 새로운 추측은 받지 않습니다.
+			if (bIsGameOver)
+			{
+				InChattingPlayerController->ClientRPCPrintChatMessageString(TEXT("게임이 종료되었습니다. 다음 게임을 기다려 주세요."));
+				return;
+			}
+
 			// 유효한 추측에만 횟수를 사용하고, 소진했다면 본인에게 안내합니다.
 			if (PlayerState->TryIncreaseGuessCount() == false)
 			{
@@ -171,6 +199,7 @@ void ABBGameModeBase::PrintChatMessageString(ABBPlayerController* InChattingPlay
 
 			// 증가한 서버 값으로 메시지를 만들어 첫 추측부터 1/3으로 표시합니다.
 			const FString JudgeResultString = JudgeResult(SecretNumberString, InChatMessageString);
+			bIsGuessAccepted = true;
 			CombinedMessageString = FString::Printf(TEXT("%s (%d/%d): %s -> %s"), *PlayerState->GetPlayerName(), PlayerState->GetCurrentGuessCount(), PlayerState->GetMaxGuessCount(), *InChatMessageString, *JudgeResultString);
 		}
 	}
@@ -184,4 +213,111 @@ void ABBGameModeBase::PrintChatMessageString(ABBPlayerController* InChattingPlay
 			TargetPlayerController->ClientRPCPrintChatMessageString(CombinedMessageString);
 		}
 	}
+
+	// 입력 원문을 모두에게 보낸 뒤, 오류 안내는 보낸 사람에게만 전달합니다.
+	if (InputErrorMessage.IsEmpty() == false)
+	{
+		InChattingPlayerController->ClientRPCPrintChatMessageString(InputErrorMessage);
+	}
+
+	// 추측 결과를 먼저 전송한 뒤, 실제로 기회를 사용한 입력에만 종료 판정을 합니다.
+	if (bIsGuessAccepted)
+	{
+		// 마지막 기회에 틀렸다면 추가 입력을 기다리지 않고 본인에게 소진 사실을 알립니다.
+		if (InChatMessageString != SecretNumberString && PlayerState->GetCurrentGuessCount() >= PlayerState->GetMaxGuessCount())
+		{
+			InChattingPlayerController->ClientRPCPrintChatMessageString(TEXT("이번 게임의 추측 횟수를 모두 사용했습니다."));
+		}
+
+		JudgeGame(InChattingPlayerController, InChatMessageString);
+	}
+}
+
+void ABBGameModeBase::JudgeGame(ABBPlayerController* InChattingPlayerController, const FString& InGuessNumberString)
+{
+	if (bIsGameOver || IsValid(InChattingPlayerController) == false)
+	{
+		return;
+	}
+
+	ABBPlayerState* PlayerState = InChattingPlayerController->GetPlayerState<ABBPlayerState>();
+	if (IsValid(PlayerState) == false)
+	{
+		return;
+	}
+
+	// 정답과 완전히 같으면 3S입니다. 마지막 기회여도 무승부보다 승리가 우선입니다.
+	if (InGuessNumberString == SecretNumberString)
+	{
+		bIsGameOver = true;
+		UE_LOG(LogTemp, Warning, TEXT("[게임 결과] %s 승리!"), *PlayerState->GetPlayerName());
+
+		// 모든 플레이어의 공지 문구를 설정하면 각 소유 클라이언트의 위젯에 복제되어 표시됩니다.
+		const FText WinnerNotification = FText::FromString(FString::Printf(TEXT("%s 승리!\n새 게임이 시작되었습니다."), *PlayerState->GetPlayerName()));
+		for (TActorIterator<ABBPlayerController> It(GetWorld()); It; ++It)
+		{
+			ABBPlayerController* PlayerController = *It;
+			if (IsValid(PlayerController))
+			{
+				PlayerController->NotificationText = WinnerNotification;
+			}
+		}
+		// 모든 플레이어에게 공지를 설정한 뒤 한 번만 초기화합니다.
+		ResetGame();
+		return;
+	}
+
+	// 접속 중인 플레이어 중 한 명이라도 기회가 남아 있으면 게임을 계속합니다.
+	for (TActorIterator<ABBPlayerController> It(GetWorld()); It; ++It)
+	{
+		ABBPlayerController* PlayerController = *It;
+		if (IsValid(PlayerController) == false)
+		{
+			continue;
+		}
+
+		ABBPlayerState* OtherPlayerState = PlayerController->GetPlayerState<ABBPlayerState>();
+		if (IsValid(OtherPlayerState) == false || OtherPlayerState->GetCurrentGuessCount() < OtherPlayerState->GetMaxGuessCount())
+		{
+			return;
+		}
+	}
+
+	// 모두 소진했고 정답자도 없을 때만 무승부로 종료하고 모든 플레이어에게 알립니다.
+	bIsGameOver = true;
+	UE_LOG(LogTemp, Warning, TEXT("[게임 결과] 무승부"));
+
+	for (TActorIterator<ABBPlayerController> It(GetWorld()); It; ++It)
+	{
+		ABBPlayerController* PlayerController = *It;
+		if (IsValid(PlayerController))
+		{
+			PlayerController->NotificationText = FText::FromString(TEXT("무승부입니다.\n새 게임이 시작되었습니다."));
+		}
+	}
+	ResetGame();
+}
+
+void ABBGameModeBase::ResetGame()
+{
+	// 새 정답을 한 번 생성합니다. 생성 함수가 서버에 정답 로그도 남깁니다.
+	SecretNumberString = GenerateSecretNumber();
+
+	for (TActorIterator<ABBPlayerController> It(GetWorld()); It; ++It)
+	{
+		ABBPlayerController* PlayerController = *It;
+		if (IsValid(PlayerController) == false)
+		{
+			continue;
+		}
+
+		ABBPlayerState* PlayerState = PlayerController->GetPlayerState<ABBPlayerState>();
+		if (IsValid(PlayerState))
+		{
+			PlayerState->ResetGuessCount();
+		}
+	}
+
+	// 공지 문구는 덮어쓰지 않고, 데이터 준비가 끝난 뒤 추측을 다시 허용합니다.
+	bIsGameOver = false;
 }
