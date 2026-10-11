@@ -22,6 +22,10 @@ public:
 
 protected:
 	virtual void BeginPlay() override;
+	virtual void OnPostLogin(AController* NewPlayer) override;
+
+	// 같은 서버 세션에서 접속할 때마다 다음 번호를 부여합니다.
+	int32 NextPlayerNumber = 1;
 
 	// 1~9에서 중복 없이 세 자리를 골라 정답 문자열을 만듭니다.
 	FString GenerateSecretNumber();

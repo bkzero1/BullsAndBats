@@ -1,4 +1,4 @@
-// Fill out your copyright notice in the Description page of Project Settings.
+﻿// Fill out your copyright notice in the Description page of Project Settings.
 
 #include "Game/BBGameModeBase.h"
 #include "Player/BBPlayerController.h"
@@ -11,6 +11,25 @@ void ABBGameModeBase::BeginPlay()
 
 	// 게임 시작 시 서버에서 이번 게임의 정답을 준비합니다.
 	SecretNumberString = GenerateSecretNumber();
+}
+
+void ABBGameModeBase::OnPostLogin(AController* NewPlayer)
+{
+	Super::OnPostLogin(NewPlayer);
+
+	ABBPlayerController* PlayerController = Cast<ABBPlayerController>(NewPlayer);
+	if (IsValid(PlayerController) == false)
+	{
+		return;
+	}
+
+	ABBPlayerState* PlayerState = PlayerController->GetPlayerState<ABBPlayerState>();
+	if (IsValid(PlayerState))
+	{
+		// 엔진의 기본 플레이어 이름에 접속 순서 번호를 저장합니다.
+		PlayerState->SetPlayerName(FString::Printf(TEXT("Player%d"), NextPlayerNumber));
+		++NextPlayerNumber;
+	}
 }
 
 FString ABBGameModeBase::GenerateSecretNumber()
@@ -106,12 +125,26 @@ void ABBGameModeBase::PrintChatMessageString(ABBPlayerController* InChattingPlay
 		return;
 	}
 
-	// 입력 원문 전체가 유효한 추측일 때만 판정 결과를 붙입니다.
-	FString CombinedMessageString = InChatMessageString;
-	if (IsGuessNumberString(InChatMessageString))
+	// 숫자로만 된 입력과 일반 채팅을 먼저 구분합니다. 빈 입력은 숫자로 보지 않습니다.
+	bool bIsNumericInput = InChatMessageString.IsEmpty() == false;
+	for (TCHAR Character : InChatMessageString)
 	{
-		// 입력한 플레이어의 상태를 가져옵니다. 다른 플레이어의 횟수는 바꾸지 않습니다.
-		ABBPlayerState* PlayerState = InChattingPlayerController->GetPlayerState<ABBPlayerState>();
+		if (Character < '0' || Character > '9')
+		{
+			bIsNumericInput = false;
+			break;
+		}
+	}
+
+	// 일반 채팅에도 보낸 사람의 이름을 붙이고 원문 내용은 유지합니다.
+	ABBPlayerState* PlayerState = InChattingPlayerController->GetPlayerState<ABBPlayerState>();
+	FString CombinedMessageString = InChatMessageString;
+	if (IsValid(PlayerState))
+	{
+		CombinedMessageString = FString::Printf(TEXT("%s: %s"), *PlayerState->GetPlayerName(), *InChatMessageString);
+	}
+	if (bIsNumericInput)
+	{
 		if (IsValid(PlayerState) == false)
 		{
 			UE_LOG(LogTemp, Warning, TEXT("BBPlayerState is missing. Check the GameMode Player State Class."));
@@ -119,24 +152,30 @@ void ABBGameModeBase::PrintChatMessageString(ABBPlayerController* InChattingPlay
 			return;
 		}
 
-		// 유효한 추측만 횟수를 사용하며, 한도에 도달하면 판정과 전체 전송을 중단합니다.
-		if (PlayerState->TryIncreaseGuessCount() == false)
+		// 잘못된 숫자 입력에는 기회가 남아 있을 때만 형식을 안내합니다.
+		if (IsGuessNumberString(InChatMessageString) == false)
 		{
-			InChattingPlayerController->ClientRPCPrintChatMessageString(TEXT("추측 횟수를 모두 사용했습니다. 다음 게임을 기다려 주세요."));
-			return;
+			if (PlayerState->GetCurrentGuessCount() < PlayerState->GetMaxGuessCount())
+			{
+				InChattingPlayerController->ClientRPCPrintChatMessageString(TEXT("숫자 추측은 1~9의 서로 다른 숫자 3개로 입력해 주세요. 예: 123"));
+			}
 		}
+		else
+		{
+			// 유효한 추측에만 횟수를 사용하고, 소진했다면 본인에게 안내합니다.
+			if (PlayerState->TryIncreaseGuessCount() == false)
+			{
+				InChattingPlayerController->ClientRPCPrintChatMessageString(TEXT("추측 횟수를 모두 사용했습니다. 다음 게임을 기다려 주세요."));
+				return;
+			}
 
-		// 증가한 서버 값을 사용해 메시지를 완성하므로 첫 추측부터 1/3으로 표시됩니다.
-		const FString JudgeResultString = JudgeResult(SecretNumberString, InChatMessageString);
-		CombinedMessageString = FString::Printf(TEXT("%s (%d/%d): %s -> %s"), *PlayerState->GetPlayerName(), PlayerState->GetCurrentGuessCount(), PlayerState->GetMaxGuessCount(), *InChatMessageString, *JudgeResultString);
-	}
-	else
-	{
-		// 일반 채팅은 유지하고, 입력 규칙 안내는 보낸 사람에게만 전달합니다.
-		InChattingPlayerController->ClientRPCPrintChatMessageString(TEXT("숫자 추측은 1~9의 서로 다른 숫자 3개로 입력해 주세요. 예: 123"));
+			// 증가한 서버 값으로 메시지를 만들어 첫 추측부터 1/3으로 표시합니다.
+			const FString JudgeResultString = JudgeResult(SecretNumberString, InChatMessageString);
+			CombinedMessageString = FString::Printf(TEXT("%s (%d/%d): %s -> %s"), *PlayerState->GetPlayerName(), PlayerState->GetCurrentGuessCount(), PlayerState->GetMaxGuessCount(), *InChatMessageString, *JudgeResultString);
+		}
 	}
 
-	// 서버의 각 컨트롤러를 통해 입력한 본인을 포함한 모두에게 전달합니다.
+	// 일반 채팅, 잘못된 숫자 원문, 유효한 추측 결과의 전송 경로를 공유합니다.
 	for (TActorIterator<ABBPlayerController> It(GetWorld()); It; ++It)
 	{
 		ABBPlayerController* TargetPlayerController = *It;
